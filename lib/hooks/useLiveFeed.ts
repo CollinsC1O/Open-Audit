@@ -1,18 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { TranslatedEvent } from "../translator/types";
 
+export type ConnectionStatus = "idle" | "connecting" | "connected" | "error";
+
 export interface LiveFeedState {
   isLive: boolean;
   isPaused: boolean;
   newEventIds: Set<string>;
+  connectionStatus: ConnectionStatus;
+  connectionError: string | null;
   toggleLive: () => void;
   togglePause: () => void;
 }
 
-const WS_URL =
-  typeof window !== "undefined"
-    ? `ws://${window.location.host}/ws/events`
-    : "";
+const WS_URL = typeof window !== "undefined" ? `ws://${window.location.host}/ws/events` : "";
 
 /**
  * Manages a WebSocket connection for the live event feed.
@@ -23,6 +24,8 @@ export function useLiveFeed(onEvent: (event: TranslatedEvent) => void): LiveFeed
   const [isLive, setIsLive] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [newEventIds, setNewEventIds] = useState<Set<string>>(new Set());
+  const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>("idle");
+  const [connectionError, setConnectionError] = useState<string | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
   const pauseBufferRef = useRef<TranslatedEvent[]>([]);
@@ -33,8 +36,15 @@ export function useLiveFeed(onEvent: (event: TranslatedEvent) => void): LiveFeed
   const connect = useCallback(() => {
     if (wsRef.current) return;
 
+    setConnectionStatus("connecting");
+    setConnectionError(null);
+
     const ws = new WebSocket(WS_URL);
     wsRef.current = ws;
+
+    ws.onopen = () => {
+      setConnectionStatus("connected");
+    };
 
     ws.onmessage = (e: MessageEvent) => {
       const event = JSON.parse(e.data as string) as TranslatedEvent;
@@ -56,8 +66,14 @@ export function useLiveFeed(onEvent: (event: TranslatedEvent) => void): LiveFeed
       }, 600);
     };
 
+    ws.onerror = () => {
+      setConnectionStatus("error");
+      setConnectionError("Could not connect to Stellar. Retrying…");
+    };
+
     ws.onclose = () => {
       wsRef.current = null;
+      setConnectionStatus("idle");
     };
   }, []);
 
@@ -65,6 +81,8 @@ export function useLiveFeed(onEvent: (event: TranslatedEvent) => void): LiveFeed
     wsRef.current?.close();
     wsRef.current = null;
     pauseBufferRef.current = [];
+    setConnectionStatus("idle");
+    setConnectionError(null);
   }, []);
 
   const toggleLive = useCallback(() => {
@@ -109,5 +127,13 @@ export function useLiveFeed(onEvent: (event: TranslatedEvent) => void): LiveFeed
     return disconnect;
   }, [disconnect]);
 
-  return { isLive, isPaused, newEventIds, toggleLive, togglePause };
+  return {
+    isLive,
+    isPaused,
+    newEventIds,
+    connectionStatus,
+    connectionError,
+    toggleLive,
+    togglePause,
+  };
 }
